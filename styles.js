@@ -302,6 +302,55 @@ BCIM.buildCSS = () => {
 .pal-swatch{width:22px;height:22px;border-radius:5px;border:1px solid var(--brd);cursor:pointer;transition:.15s;}
 .pal-swatch:hover{transform:scale(1.2);}
 
+/* ─── 3-Phasen Item Manager ─────────────────────────── */
+/* content area als flex-column */
+#bcim-content{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+
+/* Phase 1: Slot-Grid — kompakt oben */
+#bcim-phase-slots{flex-shrink:0;overflow-y:auto;max-height:200px;
+  scrollbar-width:thin;scrollbar-color:var(--brd) transparent;}
+
+/* Phase 2: Item-Browser */
+#bcim-phase-browser{flex:0 0 auto;display:flex;flex-direction:column;
+  max-height:260px;border-top:2px solid var(--acc);
+  background:color-mix(in srgb,var(--acc) 4%,transparent);}
+#bcim-browser-hdr{padding:7px 12px 5px;display:flex;flex-direction:column;gap:5px;
+  flex-shrink:0;background:color-mix(in srgb,var(--acc) 6%,transparent);
+  border-bottom:1px solid var(--brd);}
+#bcim-asset-list{overflow-y:auto;flex:1;padding:4px 8px;
+  scrollbar-width:thin;scrollbar-color:var(--brd) transparent;}
+
+/* Phase 3: Konfigurator */
+#bcim-phase-cfg{flex:1;overflow-y:auto;border-top:2px solid var(--acc2);
+  scrollbar-width:thin;scrollbar-color:var(--brd) transparent;}
+#bcim-cfg-content{padding:10px 12px 4px;}
+
+/* Action bar */
+#bcim-act{display:flex;gap:6px;padding:8px 12px;border-top:1px solid var(--brd);flex-shrink:0;}
+
+/* Asset list rows */
+.ba{padding:6px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--txt2);
+  transition:.12s;border:1px solid transparent;display:flex;align-items:center;gap:6px;
+  margin-bottom:2px;}
+.ba:hover{background:var(--bg3);color:var(--txt);}
+.ba.on{background:color-mix(in srgb,var(--acc) 12%,transparent);
+  border-color:color-mix(in srgb,var(--acc) 35%,transparent);color:var(--acc);}
+.ba-worn{background:color-mix(in srgb,var(--acc2) 7%,transparent);}
+.ba-badge{font-size:9px;padding:1px 6px;border-radius:8px;background:var(--bg3);
+  color:var(--acc);flex-shrink:0;white-space:nowrap;}
+.ba-fav{font-size:11px;cursor:pointer;opacity:.3;transition:.15s;flex-shrink:0;}
+.ba-fav:hover,.ba-fav.on{opacity:1;}
+
+/* Action buttons */
+.bbt{flex:1;padding:10px;border-radius:10px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;}
+.bbt-p{background:linear-gradient(135deg,var(--acc2),var(--acc));color:#fff;}
+.bbt-p:hover{filter:brightness(1.15);transform:translateY(-1px);}
+.bbt-d{background:color-mix(in srgb,#ff4466 10%,transparent);color:#ff6680;border:1px solid color-mix(in srgb,#ff4466 20%,transparent);}
+.bbt-d:hover{background:color-mix(in srgb,#ff4466 20%,transparent);}
+.bbt-g{background:var(--bg2);color:var(--txt2);border:1px solid var(--brd);flex:0 0 36px;}
+.bbt-g:hover{color:var(--txt);}
+.bbt:active{transform:scale(.97);}
+
 /* ─── Scrollbars ────────────────────────────────── */
 #bcim-root ::-webkit-scrollbar{width:3px;}
 #bcim-root ::-webkit-scrollbar-thumb{background:var(--brd);border-radius:3px;}
