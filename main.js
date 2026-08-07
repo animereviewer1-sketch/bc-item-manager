@@ -461,7 +461,8 @@
       const label     = (a.Description||a.label||assetName).replace(/([A-Z])/g,' $1').trim();
       const isFav     = BCIM.CFG.favorites?.includes(assetName);
       const isWorn    = curItem?.Asset?.Name === assetName;
-      const isMod     = a.isMod || BCIM.BC.isAddonAsset(a);
+      // _bcimIsMod: gesetzt vom Scan; isAddonAsset: FromAddon/AddedByMod Flags
+      const isMod     = !!(a._bcimIsMod || BCIM.BC.isAddonAsset(a));
       const arch      = BCIM.BC.getArchetype(a);
       const isSelected= BCIM.S.asset && (BCIM.S.asset.Name||BCIM.S.asset.name) === assetName;
 
@@ -503,10 +504,14 @@
   // ─────────────────────────────────────────────────────────
   function _selectAsset(a) {
     const fam = BCIM.S.char?.AssetFamily||'Female3DCG';
-    // Auflösen zum echten Asset-Objekt
-    const resolved = (a._fromCache||a.isMod||!a.Group)
-      ? (BCIM.BC.getAsset(fam, BCIM.S.group, a.Name||a.name) || a)
-      : a;
+    // IMMER ein echtes BC-Asset auflösen — niemals einen Stub speichern
+    const resolved = BCIM.BC.resolveAsset(fam, BCIM.S.group, a);
+    if (!resolved) {
+      BCIM.setStatus('⚠ Asset "' + (a.Name||a.name||'?') + '" nicht auflösbar (Mod fehlt?)', true);
+      return; // Nicht weiter — kein Anlegen möglich
+    }
+    // _bcimIsMod vom Original-Objekt übertragen (wird für Badge benötigt)
+    if (a._bcimIsMod) resolved._bcimIsMod = true;
     BCIM.S.asset = resolved;
 
     // Farben aus getragenem Item übernehmen wenn gleicher Asset

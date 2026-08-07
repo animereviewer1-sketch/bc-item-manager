@@ -324,15 +324,22 @@ BCIM.BC = {
 
   // ── Assets for group — uses scan cache ────────────────
   getAssetsForGroup: (family, group) => {
-    // Use scan cache first (most complete, includes mods)
     const cached = BCIM.getAssetsByGroup(group);
     if (cached.length) {
       return cached.map(c => {
-        try { return AssetGet(family, group, c.name) || {Name:c.name, Group:{Name:group,Family:family}, _fromCache:true}; }
-        catch { return {Name:c.name, Group:{Name:group,Family:family}, _fromCache:true}; }
+        try {
+          const bcAsset = AssetGet(family, group, c.name);
+          if (bcAsset) {
+            // Preserve isMod from scan cache — don't rely on asset structure
+            bcAsset._bcimIsMod = c.isMod;
+            return bcAsset;
+          }
+        } catch {}
+        // Unresolvable stub — mark clearly
+        return { Name:c.name, Group:{Name:group,Family:family}, _fromCache:true, _bcimIsMod:c.isMod };
       }).filter(Boolean);
     }
-    // Fallback: global Asset array
+    // Fallback: global Asset array/map
     try {
       if (typeof Asset !== 'undefined') {
         const list = (Array.isArray(Asset)?Asset:Object.values(Asset))
@@ -352,14 +359,56 @@ BCIM.BC = {
     try { return AssetGet(family, group, name)||null; } catch { return null; }
   },
 
+  // ── Resolve a proper BC asset object from any input ──
+  // CRITICAL: CharacterAppearanceSetItem NEEDS a real BC asset, never a stub
+  resolveAsset: (family, group, assetOrName) => {
+    if (!assetOrName) return null;
+    const name = typeof assetOrName === 'string' ? assetOrName : (assetOrName.Name||assetOrName.name||null);
+    if (!name) return null;
+
+    // Already a real BC asset with full family info and not a cache stub
+    if (typeof assetOrName === 'object' && assetOrName.Group?.Family && !assetOrName._fromCache) {
+      return assetOrName;
+    }
+
+    // Try AssetGet (the canonical way)
+    try { const r = AssetGet(family, group, name); if (r) return r; } catch {}
+
+    // Try global Asset array (covers mods that registered properly)
+    try {
+      const all = Array.isArray(window.Asset) ? window.Asset : Object.values(window.Asset||{});
+      const found = all.find(a => a.Name===name && (!group || a.Group?.Name===group));
+      if (found) return found;
+    } catch {}
+
+    // Try AssetFemale3DCG directly
+    try {
+      const grpArr = window.AssetFemale3DCG?.[group];
+      if (Array.isArray(grpArr)) { const f=grpArr.find(a=>a.Name===name); if(f) return f; }
+    } catch {}
+
+    // Cannot resolve — return null, caller must NOT apply
+    return null;
+  },
+
   // ── Apply item ────────────────────────────────────────
   applyItem: (char, group, asset, color, craft, property) => {
     try {
       const isPlayer = !!char.IsPlayer?.();
-      const colorArr = !color ? undefined : Array.isArray(color) ? color : [color];
-      const assetObj = (typeof asset === 'string')
-        ? (BCIM.BC.getAsset(char.AssetFamily||'Female3DCG', group, asset) || {Name:asset})
-        : asset;
+      const fam = char.AssetFamily||'Female3DCG';
+
+      // Empty color array → undefined (BC crashes on [])
+      const colorArr = (!color || (Array.isArray(color) && color.length===0))
+        ? undefined
+        : Array.isArray(color) ? color : [color];
+
+      // MUST be a real BC asset object — never a cache stub
+      const assetObj = BCIM.BC.resolveAsset(fam, group, asset);
+      if (!assetObj) {
+        const n = typeof asset==='string'?asset:(asset?.Name||asset?.name||'?');
+        console.error('[BCIM applyItem] Asset nicht auflösbar:', n, 'in', group);
+        return false;
+      }
 
       CharacterAppearanceSetItem(char, group, assetObj, colorArr);
 
@@ -544,10 +593,206 @@ BCIM.BC = {
       if(char.IsPlayer?.())ChatRoomCharacterUpdate(char);return true;}catch{return false;}
   },
 
-  isAddonAsset: (asset) => !!(asset?.DynamicGroupName||asset?.FromAddon||asset?.AddedByMod),
+  // DynamicGroupName is used by vanilla BC items too — don't use it as mod indicator
+  // Use _bcimIsMod (set during scan) or FromAddon/AddedByMod only
+  isAddonAsset: (asset) => !!(asset?._bcimIsMod || asset?.FromAddon || asset?.AddedByMod),
   loadedAddons: () => { try{const sdk=window.bcModSDK||window.ModSDK;return sdk?.ModsInfo?[...sdk.ModsInfo.values()].map(m=>m.name):[];}catch{return[];} },
   bcxRules:    () => { try{return window.bcx?.getRuleState?Object.keys(window.bcx.rules||{}).map(k=>({name:k,active:window.bcx.getRuleState(k)})):null;}catch{return null;} },
-  craftMaterials:['Shiny','Leather','LeatherSoft','Metal','Cloth','Rope','Latex','Rubber','Plastic','Fluffy','Silk'],
+  craftMaterials:['Normal','Shiny','Leather','LeatherSoft','Metal','Cloth','Rope','Latex','Rubber','Plastic','Fluffy','Silk'],
+
+  // ── CRAFTING namespace ────────────────────────────────────
+  Crafting: {
+
+    /**
+     * Read full craft data from an existing item.
+     * Returns a normalized craft object ready to display/edit.
+     */
+    readCraft: (item) => {
+      if (!item) return null;
+      const c = item.Craft || {};
+      return {
+        name:        c.Name        || '',
+        description: c.Description || '',
+        property:    c.Property    || 'Normal',   // material
+        color:       c.Color       || (Array.isArray(item.Color)?item.Color[0]:item.Color) || '',
+        lock:        c.Lock        || '',
+        memberNumber:c.MemberNumber|| null,
+        private_:    !!c.Private,
+        itemOrder:   c.ItemOrder   ?? null,
+      };
+    },
+
+    /**
+     * Build a Craft object for InventoryWear / item.Craft
+     * from user-facing fields.
+     */
+    buildCraft: (opts = {}, char) => {
+      const craft = {};
+      if (opts.name)        craft.Name         = opts.name;
+      if (opts.description) craft.Description  = opts.description;
+      if (opts.property)    craft.Property     = opts.property;   // material
+      if (opts.color)       craft.Color        = opts.color;
+      if (opts.lock)        craft.Lock         = opts.lock;
+      if (opts.private_)    craft.Private      = true;
+      if (opts.itemOrder != null) craft.ItemOrder = opts.itemOrder;
+      if (char)             craft.MemberNumber = char.MemberNumber;
+      return craft;
+    },
+
+    /**
+     * wearCrafted(target, assetName, assetGroup, opts)
+     *
+     * Creates + wears a crafted item in one step.
+     * target: "self" | character object | MemberNumber
+     * opts: { name, description, property (material), color, lock, private_, itemOrder }
+     *
+     * Mirrors BC.Crafting.wearCrafted("self","BallGag","ItemMouth",{...})
+     */
+    wearCrafted: (target, assetName, assetGroup, opts = {}) => {
+      try {
+        // Resolve character
+        let char;
+        if (target === 'self') {
+          char = window.Player;
+        } else if (typeof target === 'number') {
+          char = BCIM.BC.player(target);
+        } else if (target && typeof target === 'object') {
+          char = target;
+        }
+        if (!char) return { ok: false, reason: 'Ziel nicht gefunden: ' + target };
+
+        const fam = char.AssetFamily || 'Female3DCG';
+
+        // Resolve asset — must be a real BC object
+        const assetObj = BCIM.BC.resolveAsset(fam, assetGroup, assetName);
+        if (!assetObj) return { ok: false, reason: 'Asset nicht gefunden: ' + assetName + ' in ' + assetGroup };
+
+        // Build craft object
+        const craft = BCIM.BC.Crafting.buildCraft(opts, char);
+
+        // Resolve colors: opts.color can be string or array
+        const colors = opts.color
+          ? (Array.isArray(opts.color) ? opts.color : [opts.color])
+          : undefined;
+
+        // Use BC's InventoryWear with craft embedded:
+        // InventoryWear(C, AssetName, AssetGroup, Color, Difficulty, Craft, Property)
+        const difficulty = opts.difficulty ?? 0;
+        const property   = opts.property_obj ?? undefined; // item Property (not material)
+
+        InventoryWear(char, assetName, assetGroup, colors, difficulty, craft, property);
+
+        // If lock requested, apply it now
+        if (opts.lock && opts.lock !== '') {
+          const item = BCIM.BC.getItem(char, assetGroup);
+          if (item) {
+            try {
+              const lockAsset = AssetGet(fam, 'ItemMisc', opts.lock);
+              if (lockAsset && typeof InventoryLock === 'function') {
+                InventoryLock(char, item, { Asset: lockAsset }, char.MemberNumber);
+              } else {
+                // Fallback: set property directly
+                item.Property = item.Property || {};
+                item.Property.LockedBy = opts.lock;
+              }
+            } catch (le) { console.warn('[BCIM wearCrafted] lock error', le); }
+          }
+        }
+
+        CharacterRefresh(char);
+
+        // Sync
+        if (char.IsPlayer?.()) {
+          ChatRoomCharacterUpdate(char);
+          BCIM._sendFullSync(char.MemberNumber, assetName, assetGroup, char);
+        } else {
+          BCIM._lastSyncData = { memberNumber: char.MemberNumber, assetName, assetGroup, targetChar: char };
+          BCIM._syncStep1();
+          setTimeout(() => BCIM._syncStep2(), 150);
+          setTimeout(() => BCIM._syncStep3(), 350);
+          setTimeout(() => BCIM._syncStep5(), 500);
+        }
+
+        console.log('[BCIM wearCrafted] ✓', assetName, 'on', char.Name, '| craft:', craft);
+        BCIM.emit('itemApplied', { char, group: assetGroup, assetName, craft, opts });
+        return { ok: true, craft };
+
+      } catch (e) {
+        console.error('[BCIM wearCrafted]', e);
+        return { ok: false, reason: String(e.message || e) };
+      }
+    },
+
+    /**
+     * Update craft on already-worn item without re-wearing it.
+     */
+    updateCraft: (char, assetGroup, opts = {}) => {
+      try {
+        const item = BCIM.BC.getItem(char, assetGroup);
+        if (!item) return { ok: false, reason: 'Kein Item im Slot' };
+        const craft = BCIM.BC.Crafting.buildCraft(opts, char);
+        item.Craft = { ...(item.Craft || {}), ...craft };
+        CharacterRefresh(char);
+        if (char.IsPlayer?.()) ChatRoomCharacterUpdate(char);
+        return { ok: true, craft: item.Craft };
+      } catch (e) {
+        return { ok: false, reason: String(e.message || e) };
+      }
+    },
+
+    /** Read all craft-relevant extended item properties from an asset */
+    readAssetProperties: (asset, curItem) => {
+      if (!asset) return {};
+      const prop = curItem?.Property || {};
+      const out  = {};
+
+      // Typed variants (e.g. BallGag: Inflatable, Small, Large...)
+      if (asset.AllowType?.length)  out.allowType  = asset.AllowType;
+      if (prop.Type)                out.currentType = prop.Type;
+
+      // Effects
+      if (asset.Effect?.length)     out.effects    = asset.Effect;
+      if (asset.Block?.length)      out.blocks     = asset.Block;
+
+      // Vibrator modes
+      if (asset.IsVibrator || asset.AllowEffect?.includes('Vibrate'))
+        out.isVibrator = true;
+
+      // Text
+      if (asset.AllowText || asset.MaxText) {
+        out.allowText = true;
+        out.maxText   = asset.MaxText || 100;
+        out.currentText = prop.Text || '';
+      }
+
+      // Difficulty / escape
+      out.difficulty  = prop.Difficulty ?? (asset.Difficulty ?? 0);
+      out.selfUnlock  = prop.SelfUnlock ?? true;
+      out.allowLock   = asset.AllowLock !== false;
+
+      // Lock
+      if (prop.LockedBy) {
+        out.lockedBy = prop.LockedBy;
+        out.lockTimer = prop.RemoveTimer || null;
+        out.lockRemoveAt = prop.RemoveItemTime || null;
+        out.lockPassword = prop.Password || null;
+        out.lockHint     = prop.Hint     || null;
+        out.lockCombo    = prop.CombinationNumber || null;
+      }
+
+      // Modular
+      if (asset.Modules?.length) {
+        out.isModular = true;
+        out.modules = asset.Modules.map(m => ({
+          name: m.Name, key: m.Key || m.Name,
+          options: m.Options.map(o => typeof o === 'string' ? o : o.Name),
+          current: prop.Type ? null : undefined, // decoded separately
+        }));
+      }
+
+      return out;
+    },
+  },
 };
 
 // ── Auto-scan on load ─────────────────────────────────────
